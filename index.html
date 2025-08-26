@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>나만의 작은 테라리움</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            touch-action: none;
+        }
+        .cursor-item { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="green" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 22s2-2 5-2 5 2 5 2-2 2-5 2-5-2-5-2zM7 22V10a5 5 0 0 1 5-5v0a5 5 0 0 1 5 5v12"></path></svg>'), auto; }
+        .cursor-move { cursor: grab; }
+        .cursor-moving { cursor: grabbing; }
+        .cursor-rotate { cursor: ew-resize; }
+        
+        .terrarium-jar {
+            position: relative;
+            border: 10px solid rgba(255, 255, 255, 0.3);
+            border-radius: 45% 45% 20px 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1), inset 0 0 20px rgba(255, 255, 255, 0.5);
+            background: rgba(220, 230, 255, 0.1);
+            overflow: hidden;
+            perspective: 1000px;
+        }
+        .terrarium-jar::before {
+            content: ''; position: absolute; top: 5%; left: 10%; width: 30%; height: 15%;
+            background: rgba(255, 255, 255, 0.4); border-radius: 50%; filter: blur(10px);
+            transform: rotate(-15deg);
+        }
+        .soil {
+            position: absolute; bottom: 0; left: 0; right: 0; height: 15%;
+            background: #6b4f35; border-radius: 0 0 18px 18px; z-index: 1;
+        }
+        .soil::before {
+            content: ''; position: absolute; top: -10px; left: 0; right: 0; height: 20px;
+            background: #8a6e4d; border-radius: 50% / 10px;
+        }
+        .item {
+            position: absolute; user-select: none; -webkit-user-select: none;
+        }
+        .item:hover {
+            filter: drop-shadow(0 0 5px rgba(255, 255, 100, 0.8));
+        }
+        #top-view-container {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            background-color: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(5px);
+            border-radius: 50%;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            padding: 10px;
+            z-index: 100;
+            transition: opacity 0.3s, transform 0.3s;
+        }
+        #top-view-container.hidden {
+            opacity: 0;
+            transform: scale(0.5);
+            pointer-events: none;
+        }
+        #top-view-map {
+            width: 120px;
+            height: 120px;
+            cursor: crosshair;
+        }
+        /* 도움말 모달 스타일 */
+        #help-modal-backdrop {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.5); z-index: 1000;
+        }
+        #help-modal {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 90%; max-width: 500px; max-height: 80vh;
+            background-color: white; border-radius: 1rem;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+            z-index: 1001;
+            display: flex; flex-direction: column;
+        }
+        #help-modal-content {
+            padding: 1.5rem; overflow-y: auto;
+        }
+        #help-modal-content h3 { font-size: 1.25rem; font-weight: bold; margin-bottom: 1rem; color: #333; }
+        #help-modal-content h4 { font-size: 1rem; font-weight: bold; margin-top: 1rem; margin-bottom: 0.5rem; color: #555; }
+        #help-modal-content p, #help-modal-content li { color: #666; margin-bottom: 0.5rem; }
+        #help-modal-content ul { list-style-position: inside; }
+        .hidden { display: none; }
+
+        /* 임시 위치 표시 스타일 */
+        .placement-marker {
+            position: absolute;
+            width: 16px; height: 16px;
+            border-radius: 50%;
+            background-color: rgba(255, 255, 100, 0.8);
+            border: 2px solid white;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            z-index: 999;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: translate(-50%, -50%) scale(0.9); opacity: 0.7; }
+            50% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(0.9); opacity: 0.7; }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex flex-col items-center justify-center min-h-screen p-2 sm:p-4">
+
+    <div class="w-full max-w-md mx-auto flex flex-col h-screen relative">
+        <header class="pt-4 pb-2 text-center">
+            <h1 class="text-2xl sm:text-3xl font-bold text-gray-700">나만의 작은 테라리움</h1>
+            <p id="guide-text" class="text-gray-500 text-sm sm:text-base">아이템을 선택하고 높이를 정해주세요.</p>
+        </header>
+
+        <!-- 테라리움 영역 -->
+        <div id="terrarium" class="terrarium-jar w-full relative cursor-item flex-grow my-2">
+            <div class="soil"></div>
+        </div>
+
+        <!-- 상단 뷰 -->
+        <div id="top-view-container" class="hidden">
+            <svg id="top-view-map" viewBox="0 0 100 100"></svg>
+        </div>
+        
+        <!-- 도움말 버튼 -->
+        <button id="help-button" class="absolute top-4 right-4 bg-white/70 backdrop-blur-sm rounded-full p-2 shadow-md hover:bg-white transition-colors z-50">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        </button>
+
+        <!-- 상태 표시줄 -->
+        <div class="w-full bg-white rounded-lg p-3 my-1 shadow-md">
+            <div class="flex justify-between items-center">
+                <span class="font-bold text-blue-600">습도</span>
+                <span id="humidity-text" class="font-semibold">50%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-4 mt-2">
+                <div id="humidity-bar" class="bg-blue-400 h-4 rounded-full transition-all duration-500" style="width: 50%;"></div>
+            </div>
+             <p id="status-message" class="text-center text-xs text-gray-500 mt-2">적당한 습도에요. 식물들이 좋아합니다.</p>
+        </div>
+
+        <!-- 도구 및 아이템 선택 패널 -->
+        <div class="w-full bg-white rounded-lg p-2 sm:p-4 my-1 mb-4 shadow-md">
+            <div class="grid grid-cols-5 gap-2">
+                <!-- 도구 -->
+                <div id="tool-water" class="tool-item flex flex-col items-center justify-center p-2 rounded-lg border-2 border-transparent hover:border-blue-400 cursor-pointer" data-tool="water">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-blue-500"><path d="M12 22a7 7 0 0 0 7-7c0-2-1-4-3-5s-3-2-3-3c0-1.1.9-2 2-2 1.1 0 2 .9 2 2"/><path d="M12 22v-2.5m0 0a2.5 2.5 0 0 1-5 0c0-1.4 1.1-2.5 2.5-2.5S12 18.1 12 19.5z"/></svg>
+                    <span class="text-xs font-semibold mt-1">물주기</span>
+                </div>
+                <div id="tool-move" class="tool-item flex flex-col items-center justify-center p-2 rounded-lg border-2 border-transparent hover:border-gray-400 cursor-pointer" data-tool="move">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-600"><path d="M5 9l-3 3 3 3"/><path d="M9 5l3-3 3 3"/><path d="M15 19l-3 3-3-3"/><path d="M19 9l3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/></svg>
+                    <span class="text-xs font-semibold mt-1">이동</span>
+                </div>
+                <div id="tool-remove" class="tool-item flex flex-col items-center justify-center p-2 rounded-lg border-2 border-transparent hover:border-red-400 cursor-pointer" data-tool="remove">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-red-500"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                    <span class="text-xs font-semibold mt-1">제거</span>
+                </div>
+                
+                <!-- 아이템 -->
+                <div class="item-selector flex flex-col items-center justify-center p-2 rounded-lg border-2 border-green-500 bg-green-100 cursor-pointer" data-item="moss">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 200 200"><path fill="#6A994E" d="M62 138c-5-1-10-3-14-6-10-6-16-16-18-28-1-8 1-16 5-23 4-6 10-11 17-13 4-1 8-1 12 0 10 3 18 10 21 20 2 6 2 13 0 19-3 10-10 18-20 23-2 1-4 2-6 2z M138 142c-5-1-10-3-14-6-10-6-16-16-18-28-1-8 1-16 5-23 4-6 10-11 17-13 4-1 8-1 12 0 10 3 18 10 21 20 2 6 2 13 0 19-3 10-10 18-20 23-2 1-4 2-6 2z M98 92c-5-1-10-3-14-6-10-6-16-16-18-28-1-8 1-16 5-23 4-6 10-11 17-13 4-1 8-1 12 0 10 3 18 10 21 20 2 6 2 13 0 19-3 10-10 18-20 23-2 1-4 2-6 2z"/></svg>
+                    <span class="text-xs font-semibold mt-1">이끼</span>
+                </div>
+                <div class="item-selector flex flex-col items-center justify-center p-2 rounded-lg border-2 border-transparent hover:border-green-400 cursor-pointer" data-item="fern">
+                     <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"><path fill="#386641" d="M16.82,19.22C16.41,19.72 15.79,20 15.17,20H8.83C8.21,20 7.59,19.72 7.18,19.22L2,12.84V11.53C2,10.68 2.68,10 3.53,10H20.47C21.32,10 22,10.68 22,11.53V12.84L16.82,19.22M12,4C10.83,4 9.83,4.56 9.22,5.5L14.78,5.5C14.17,4.56 13.17,4 12,4M9.22,6.5L7.18,9H16.82L14.78,6.5H9.22Z" /></svg>
+                    <span class="text-xs font-semibold mt-1">양치류</span>
+                </div>
+                <div class="item-selector flex flex-col items-center justify-center p-2 rounded-lg border-2 border-transparent hover:border-green-400 cursor-pointer" data-item="succulent">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"><path fill="#A7C957" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4Z" /></svg>
+                    <span class="text-xs font-semibold mt-1">다육이</span>
+                </div>
+                <div class="item-selector flex flex-col items-center justify-center p-2 rounded-lg border-2 border-transparent hover:border-yellow-600 cursor-pointer" data-item="largeRock">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"><path fill="#8d8d8d" d="M19.9,12.66C19.5,10.79 18.1,9.2 16.29,8.53C16.21,8.5 16.13,8.48 16.05,8.47C15.8,8.41 15.55,8.38 15.29,8.38C14.7,8.38 14.15,8.5 13.68,8.72C12.6,7.5 11.04,6.75 9.29,6.75C6.9,6.75 4.9,8.23 4.2,10.33C4.1,10.64 4,10.97 4,11.31C4,12.93 4.84,14.36 6.08,15.26C6.21,15.36 6.33,15.45 6.45,15.53C6.45,15.53 6.45,15.53 6.46,15.54C7.9,16.5 9.6,17.25 11.44,17.25H12.5C16.3,17.25 19.41,15.21 19.9,12.66Z"/></svg>
+                    <span class="text-xs font-semibold mt-1">바위</span>
+                </div>
+                 <div class="item-selector flex flex-col items-center justify-center p-2 rounded-lg border-2 border-transparent hover:border-yellow-600 cursor-pointer" data-item="largeDriftwood">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24"><path fill="#7f5539" d="M20.4,9.2C19.6,5.9 16.8,3.5 13.5,3.1C10.2,2.7 7.1,4.3 5.5,7.1C3.9,9.9 4.7,13.5 7.2,15.6C7.2,15.6 10.3,18.8 10.8,19.3C11.3,19.8 12.1,20.2 12.9,20.2C13.7,20.2 14.5,19.8 15,19.3C15.5,18.8 18.6,15.6 18.6,15.6C21.1,13.5 21.9,9.9 20.4,9.2Z" /></svg>
+                    <span class="text-xs font-semibold mt-1">유목</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 도움말 모달 -->
+    <div id="help-modal-backdrop" class="hidden">
+        <div id="help-modal">
+            <div id="help-modal-content">
+                <h3>🌿 나만의 작은 테라리움: 게임 매뉴얼</h3>
+                <p>이 게임은 식물과 조형물을 자유롭게 배치하여 세상에 단 하나뿐인 당신만의 유리 정원을 만드는 힐링 게임입니다.</p>
+                
+                <h4>🎯 게임 목표</h4>
+                <p>다양한 식물과 조형물을 수집하고 배치하여 테라리움을 아름답게 꾸미는 것이 목표입니다. 식물들이 잘 자랄 수 있도록 습도를 관리해주며, 당신의 창의력을 발휘하여 가장 멋진 테라리움을 만들어보세요.</p>
+
+                <h4>🕹️ 조작 방법</h4>
+                <ul>
+                    <li><b>아이템 배치하기 (2단계):</b>
+                        <ol class="list-decimal list-inside ml-4">
+                            <li>하단 패널에서 아이템 선택 후, 테라리움의 원하는 높이를 클릭하세요.</li>
+                            <li>화면 우측 상단에 나타나는 원형 맵(상단 뷰)에서 최종 위치와 깊이를 클릭하여 확정합니다.</li>
+                        </ol>
+                    </li>
+                    <li><b>테라리움 회전하기:</b> 빈 공간을 누른 채 좌우로 드래그하면 360도 회전합니다.</li>
+                    <li><b>도구 사용하기:</b>
+                        <ul class="list-disc list-inside ml-4">
+                            <li><b>물주기:</b> 습도를 올립니다.</li>
+                            <li><b>이동:</b> 식물, 작은 조형물을 드래그하여 위치를 바꿉니다. (중심 조형물 제외)</li>
+                            <li><b>제거:</b> 아이템을 클릭하여 없앱니다.</li>
+                        </ul>
+                    </li>
+                </ul>
+
+                <h4>🌱 식물 키우기 팁</h4>
+                <p>모든 식물은 각자 좋아하는 최적의 습도 환경이 있습니다. 습도 바를 확인하며 식물이 건강하게 자라도록 관리해주세요. 습도가 맞지 않으면 성장이 멈추고 색이 어두워집니다.</p>
+            </div>
+            <div class="p-4 bg-gray-50 text-right rounded-b-lg">
+                <button id="help-modal-close" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const terrarium = document.getElementById('terrarium');
+            const humidityBar = document.getElementById('humidity-bar');
+            const humidityText = document.getElementById('humidity-text');
+            const statusMessage = document.getElementById('status-message');
+            const toolItems = document.querySelectorAll('.tool-item');
+            const itemSelectors = document.querySelectorAll('.item-selector');
+            const topViewContainer = document.getElementById('top-view-container');
+            const topViewMap = document.getElementById('top-view-map');
+            const guideText = document.getElementById('guide-text');
+            const helpButton = document.getElementById('help-button');
+            const helpModalBackdrop = document.getElementById('help-modal-backdrop');
+            const helpModalClose = document.getElementById('help-modal-close');
+
+            let gameState = {
+                humidity: 50, items: [], centerpiece: null,
+                selectedTool: 'item', selectedItemType: 'moss',
+                nextItemId: 0, draggedItem: null, isRotating: false,
+                rotationAngle: 0, lastDragX: 0,
+                placementStep: 'step1_height', pendingPlacement: null
+            };
+
+            const itemData = {
+                moss: { category: 'plant', name: '이끼', svg: `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 200 200"><path fill="#6A994E" d="M62 138c-5-1-10-3-14-6-10-6-16-16-18-28-1-8 1-16 5-23 4-6 10-11 17-13 4-1 8-1 12 0 10 3 18 10 21 20 2 6 2 13 0 19-3 10-10 18-20 23-2 1-4 2-6 2z M138 142c-5-1-10-3-14-6-10-6-16-16-18-28-1-8 1-16 5-23 4-6 10-11 17-13 4-1 8-1 12 0 10 3 18 10 21 20 2 6 2 13 0 19-3 10-10 18-20 23-2 1-4 2-6 2z M98 92c-5-1-10-3-14-6-10-6-16-16-18-28-1-8 1-16 5-23 4-6 10-11 17-13 4-1 8-1 12 0 10 3 18 10 21 20 2 6 2 13 0 19-3 10-10 18-20 23-2 1-4 2-6 2z"/></svg>`, optimalHumidity: [60, 90], growthRate: 0.005, initialSize: 40 },
+                fern: { category: 'plant', name: '양치류', svg: `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 24 24"><path fill="#386641" d="M16.82,19.22C16.41,19.72 15.79,20 15.17,20H8.83C8.21,20 7.59,19.72 7.18,19.22L2,12.84V11.53C2,10.68 2.68,10 3.53,10H20.47C21.32,10 22,10.68 22,11.53V12.84L16.82,19.22M12,4C10.83,4 9.83,4.56 9.22,5.5L14.78,5.5C14.17,4.56 13.17,4 12,4M9.22,6.5L7.18,9H16.82L14.78,6.5H9.22Z" /></svg>`, optimalHumidity: [50, 80], growthRate: 0.008, initialSize: 50 },
+                succulent: { category: 'plant', name: '다육이', svg: `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 24 24"><path fill="#A7C957" d="M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4C16.41,4 20,7.59 20,12C20,16.41 16.41,20 12,20C7.59,20 4,16.41 4,12C4,7.59 7.59,4 12,4Z" /></svg>`, optimalHumidity: [20, 40], growthRate: 0.003, initialSize: 35 },
+                largeRock: { category: 'centerpiece', name: '바위', svg: `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 24 24"><path fill="#8d8d8d" d="M19.9,12.66C19.5,10.79 18.1,9.2 16.29,8.53C16.21,8.5 16.13,8.48 16.05,8.47C15.8,8.41 15.55,8.38 15.29,8.38C14.7,8.38 14.15,8.5 13.68,8.72C12.6,7.5 11.04,6.75 9.29,6.75C6.9,6.75 4.9,8.23 4.2,10.33C4.1,10.64 4,10.97 4,11.31C4,12.93 4.84,14.36 6.08,15.26C6.21,15.36 6.33,15.45 6.45,15.53C6.45,15.53 6.45,15.53 6.46,15.54C7.9,16.5 9.6,17.25 11.44,17.25H12.5C16.3,17.25 19.41,15.21 19.9,12.66Z" /></svg>`, initialSize: 120 },
+                largeDriftwood: { category: 'centerpiece', name: '유목', svg: `<svg xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" viewBox="0 0 24 24"><path fill="#7f5539" d="M20.4,9.2C19.6,5.9 16.8,3.5 13.5,3.1C10.2,2.7 7.1,4.3 5.5,7.1C3.9,9.9 4.7,13.5 7.2,15.6C7.2,15.6 10.3,18.8 10.8,19.3C11.3,19.8 12.1,20.2 12.9,20.2C13.7,20.2 14.5,19.8 15,19.3C15.5,18.8 18.6,15.6 18.6,15.6C21.1,13.5 21.9,9.9 20.4,9.2Z" /></svg>`, initialSize: 140 }
+            };
+
+            function renderAllItems() {
+                const totalRotationRad = gameState.rotationAngle * Math.PI / 180;
+                const allItems = [...gameState.items];
+                if (gameState.centerpiece) allItems.push(gameState.centerpiece);
+
+                allItems.forEach(item => {
+                    const data = itemData[item.type];
+                    if (data.category === 'plant' && item.isHealthy) {
+                        if (item.scale < 2.5) item.scale += data.growthRate;
+                    }
+
+                    const initialAngleRad = item.initialAngle * Math.PI / 180;
+                    const rotatedAngleRad = initialAngleRad + totalRotationRad;
+                    const xProjection = Math.sin(rotatedAngleRad);
+                    const zProjection = Math.cos(rotatedAngleRad);
+                    
+                    const radius = item.depth * 45; 
+                    const screenX = 50 + xProjection * radius;
+                    item.element.style.left = `${screenX}%`;
+                    item.element.style.top = `${item.yPos}%`;
+                    
+                    const perceivedDepth = item.depth * zProjection;
+                    const scaleFactor = (perceivedDepth + 1.2) / 2.2;
+                    const newScale = item.scale * (0.5 + scaleFactor * 0.75);
+                    
+                    item.element.style.transform = `translate(-50%, -50%) scale(${newScale})`;
+                    const healthOpacity = (data.category === 'plant' && !item.isHealthy) ? 0.5 : 1;
+                    item.element.style.opacity = (0.3 + scaleFactor * 0.7) * healthOpacity;
+                    item.element.style.zIndex = Math.round(perceivedDepth * 50 + 50);
+                });
+            }
+
+            function updateUI() {
+                const humidity = Math.round(gameState.humidity);
+                humidityBar.style.width = `${humidity}%`;
+                humidityText.innerText = `${humidity}%`;
+
+                if (humidity > 95) statusMessage.innerText = "너무 습해요! 식물들이 숨쉬기 힘들어해요.";
+                else if (humidity < 15) statusMessage.innerText = "너무 건조해요! 식물들이 말라가고 있어요.";
+                else statusMessage.innerText = "적당한 습도에요. 식물들이 좋아합니다.";
+
+                toolItems.forEach(item => item.classList.remove('bg-blue-100', 'border-blue-500'));
+                itemSelectors.forEach(item => item.classList.remove('bg-green-100', 'border-green-500', 'bg-yellow-100', 'border-yellow-600'));
+                
+                terrarium.classList.remove('cursor-item', 'cursor-move', 'cursor-rotate');
+                if (gameState.selectedTool === 'item') {
+                    const selector = document.querySelector(`.item-selector[data-item="${gameState.selectedItemType}"]`);
+                    if (selector) {
+                        const data = itemData[gameState.selectedItemType];
+                        selector.classList.add(data.category === 'plant' ? 'bg-green-100' : 'bg-yellow-100', data.category === 'plant' ? 'border-green-500' : 'border-yellow-600');
+                    }
+                    terrarium.classList.add('cursor-item');
+                } else {
+                    const tool = document.getElementById(`tool-${gameState.selectedTool}`);
+                    if (tool) tool.classList.add('bg-blue-100', 'border-blue-500');
+                    if(gameState.selectedTool === 'move') terrarium.classList.add('cursor-move');
+                }
+            }
+            
+            function placeItem(placementData) {
+                const { type, yPos, depth, initialAngle } = placementData;
+                const data = itemData[type];
+                if (!data) return;
+
+                let newItem = {
+                    id: gameState.nextItemId++, type, initialAngle, depth, yPos,
+                    scale: 1.0, isHealthy: true, element: null
+                };
+
+                if (data.category === 'centerpiece') {
+                    if (gameState.centerpiece) gameState.centerpiece.element.remove();
+                    gameState.centerpiece = newItem;
+                } else {
+                    gameState.items.push(newItem);
+                }
+
+                const itemEl = document.createElement('div');
+                itemEl.classList.add('item');
+                itemEl.dataset.id = newItem.id;
+                itemEl.innerHTML = data.svg;
+                itemEl.style.width = `${data.initialSize}px`;
+                itemEl.style.height = `${data.initialSize}px`;
+
+                terrarium.appendChild(itemEl);
+                newItem.element = itemEl;
+                renderAllItems();
+            }
+
+            function renderTopView() {
+                topViewMap.innerHTML = '';
+                const svgNS = "http://www.w3.org/2000/svg";
+                const boundary = document.createElementNS(svgNS, 'circle');
+                boundary.setAttribute('cx', '50');
+                boundary.setAttribute('cy', '50');
+                boundary.setAttribute('r', '48');
+                boundary.setAttribute('fill', 'rgba(0,0,0,0.1)');
+                boundary.setAttribute('stroke', '#fff');
+                boundary.setAttribute('stroke-width', '2');
+                topViewMap.appendChild(boundary);
+
+                const allItems = [...gameState.items];
+                if(gameState.centerpiece) allItems.push(gameState.centerpiece);
+
+                allItems.forEach(item => {
+                    const totalRotationRad = gameState.rotationAngle * Math.PI / 180;
+                    const initialAngleRad = item.initialAngle * Math.PI / 180;
+                    const rotatedAngleRad = initialAngleRad + totalRotationRad;
+                    const radius = item.depth * 48;
+                    const cx = 50 + Math.sin(rotatedAngleRad) * radius;
+                    const cy = 50 - Math.cos(rotatedAngleRad) * radius; 
+                    
+                    const dot = document.createElementNS(svgNS, 'circle');
+                    dot.setAttribute('cx', cx);
+                    dot.setAttribute('cy', cy);
+                    dot.setAttribute('r', '3');
+                    dot.setAttribute('fill', itemData[item.type].category === 'plant' ? '#6A994E' : '#7f5539');
+                    topViewMap.appendChild(dot);
+                });
+            }
+
+            function gameLoop() {
+                gameState.humidity = Math.max(0, gameState.humidity - 0.05);
+                gameState.items.forEach(item => {
+                    const data = itemData[item.type];
+                    if (data.category === 'plant') {
+                        const [minHum, maxHum] = data.optimalHumidity;
+                        item.isHealthy = gameState.humidity >= minHum && gameState.humidity <= maxHum;
+                    }
+                });
+                renderAllItems();
+                updateUI();
+            }
+
+            toolItems.forEach(item => {
+                item.addEventListener('click', () => {
+                    gameState.selectedTool = item.dataset.tool;
+                    if (item.dataset.tool === 'water') gameState.humidity = Math.min(100, gameState.humidity + 15);
+                    updateUI();
+                });
+            });
+
+            itemSelectors.forEach(selector => {
+                selector.addEventListener('click', () => {
+                    gameState.selectedTool = 'item';
+                    gameState.selectedItemType = selector.dataset.item;
+                    updateUI();
+                });
+            });
+
+            function handleInteractionStart(e, clientX, clientY) {
+                const targetEl = e.target;
+                if (targetEl.closest('.item')) {
+                    handleDragStart(targetEl.closest('.item'));
+                } else if (targetEl === terrarium || targetEl.classList.contains('soil')) {
+                    if (gameState.selectedTool === 'item') {
+                        const rect = terrarium.getBoundingClientRect();
+                        const soilLine = rect.height * 0.85;
+                        if (clientY - rect.top < soilLine) {
+                            const yPercent = ((clientY - rect.top) / rect.height) * 100;
+                            const type = gameState.selectedItemType;
+                            
+                            if (gameState.pendingPlacement && gameState.pendingPlacement.markerElement) {
+                                gameState.pendingPlacement.markerElement.remove();
+                            }
+                            const marker = document.createElement('div');
+                            marker.className = 'placement-marker';
+                            marker.style.left = `${clientX - rect.left}px`;
+                            marker.style.top = `${clientY - rect.top}px`;
+                            terrarium.appendChild(marker);
+
+                            gameState.pendingPlacement = { yPos: yPercent, type: type, markerElement: marker };
+                            guideText.innerText = "위치를 정해주세요 (우측 상단 원형 맵)";
+                            topViewContainer.classList.remove('hidden');
+                            renderTopView();
+                        }
+                    } else {
+                        handleRotationStart(clientX);
+                    }
+                }
+            }
+            
+            topViewMap.addEventListener('click', (e) => {
+                if(gameState.pendingPlacement) {
+                    const rect = topViewMap.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const y = e.clientY - rect.top;
+                    const dx = x - rect.width / 2;
+                    const dy = y - rect.height / 2;
+
+                    const clickRadius = Math.sqrt(dx*dx + dy*dy);
+                    if (clickRadius > rect.width / 2) return;
+
+                    const angleRad = Math.atan2(dx, -dy);
+                    const depth = clickRadius / (rect.width / 2);
+
+                    const totalRotationRad = gameState.rotationAngle * Math.PI / 180;
+                    const newInitialAngleRad = angleRad - totalRotationRad;
+
+                    placeItem({
+                        ...gameState.pendingPlacement,
+                        depth: depth,
+                        initialAngle: newInitialAngleRad * 180 / Math.PI
+                    });
+
+                    gameState.pendingPlacement.markerElement.remove();
+                    gameState.pendingPlacement = null;
+                    guideText.innerText = "아이템을 선택하고 높이를 정해주세요.";
+                    topViewContainer.classList.add('hidden');
+                }
+            });
+
+            function handleDragStart(itemEl) {
+                const itemId = parseInt(itemEl.dataset.id);
+                if (gameState.selectedTool === 'remove') {
+                    if (gameState.centerpiece && gameState.centerpiece.id === itemId) gameState.centerpiece = null;
+                    else gameState.items = gameState.items.filter(p => p.id !== itemId);
+                    itemEl.remove();
+                } else if (gameState.selectedTool === 'move') {
+                    let itemToDrag = gameState.items.find(p => p.id === itemId);
+                    if (!itemToDrag && gameState.centerpiece && gameState.centerpiece.id === itemId) {
+                        itemToDrag = gameState.centerpiece;
+                    }
+                    if (itemToDrag && itemData[itemToDrag.type].category === 'centerpiece') return;
+                    if (itemToDrag) {
+                        gameState.draggedItem = { item: itemToDrag };
+                        terrarium.classList.add('cursor-moving');
+                    }
+                }
+            }
+            
+            function handleRotationStart(clientX) {
+                gameState.isRotating = true;
+                gameState.lastDragX = clientX;
+                terrarium.classList.add('cursor-rotate');
+            }
+
+            function handleInteractionMove(clientX, clientY) {
+                if (gameState.draggedItem) handleDragMove(clientX, clientY);
+                if (gameState.isRotating) handleRotationMove(clientX);
+            }
+
+            function handleDragMove(clientX, clientY) {
+                const rect = terrarium.getBoundingClientRect();
+                const item = gameState.draggedItem.item;
+                const newYPercent = (clientY / rect.height) * 100;
+                if (newYPercent > 85 || newYPercent < 0) return;
+                item.yPos = newYPercent;
+            }
+            
+            function handleRotationMove(clientX) {
+                const deltaX = clientX - gameState.lastDragX;
+                gameState.lastDragX = clientX;
+                const sensitivity = 360 / (terrarium.offsetWidth * 2);
+                gameState.rotationAngle -= deltaX * sensitivity;
+            }
+
+            function handleInteractionEnd() {
+                if (gameState.draggedItem) {
+                    gameState.draggedItem = null;
+                    terrarium.classList.remove('cursor-moving');
+                }
+                if (gameState.isRotating) {
+                    gameState.isRotating = false;
+                }
+            }
+
+            // 도움말 모달 이벤트
+            helpButton.addEventListener('click', () => helpModalBackdrop.classList.remove('hidden'));
+            helpModalClose.addEventListener('click', () => helpModalBackdrop.classList.add('hidden'));
+            helpModalBackdrop.addEventListener('click', (e) => {
+                if (e.target === helpModalBackdrop) {
+                    helpModalBackdrop.classList.add('hidden');
+                }
+            });
+
+            // 마우스 이벤트
+            terrarium.addEventListener('mousedown', (e) => handleInteractionStart(e, e.clientX, e.clientY));
+            window.addEventListener('mousemove', (e) => handleInteractionMove(e.clientX, e.clientY));
+            window.addEventListener('mouseup', handleInteractionEnd);
+
+            // 터치 이벤트
+            terrarium.addEventListener('touchstart', (e) => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                handleInteractionStart(e, touch.clientX, touch.clientY);
+            }, { passive: false });
+            window.addEventListener('touchmove', (e) => {
+                if (gameState.draggedItem || gameState.isRotating) {
+                    e.preventDefault();
+                    const touch = e.touches[0];
+                    handleInteractionMove(touch.clientX, touch.clientY);
+                }
+            }, { passive: false });
+            window.addEventListener('touchend', handleInteractionEnd);
+
+            updateUI();
+            setInterval(gameLoop, 1000 / 60);
+        });
+    </script>
+</body>
+</html>
